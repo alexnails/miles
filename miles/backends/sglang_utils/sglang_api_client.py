@@ -8,6 +8,8 @@ from miles.utils.http_utils import GeneralHttpClientProvider
 
 logger = logging.getLogger(__name__)
 
+WEIGHT_SYNC_RPC_TIMEOUT_SECONDS = 900.0
+
 
 def _compute_headers(api_key: str | None) -> dict[str, str]:
     return {
@@ -59,18 +61,20 @@ async def wait_server_healthy(server_url, api_key):
 class SGLangApiClient:
     server_url: str
 
-    async def _make_request(self, endpoint: str, payload: dict | None = None):
+    async def _make_request(self, endpoint: str, payload: dict | None = None, timeout: float | None = None):
         """Make a POST request to the specified endpoint with the given payload.
 
         Args:
             endpoint: The API endpoint to call
             payload: The JSON payload to send (default: empty dict)
+            timeout: Read timeout in seconds; None keeps the shared client default
 
         Returns:
             The JSON response from the server
         """
         url = f"{self.server_url}/{endpoint}"
-        response = await GeneralHttpClientProvider.client().post(url, json=payload or {})
+        overrides = {} if timeout is None else {"timeout": timeout}
+        response = await GeneralHttpClientProvider.client().post(url, json=payload or {}, **overrides)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
@@ -296,6 +300,7 @@ class SGLangApiClient:
                 "source_dir": source_dir,
                 "target_version": target_version,
             },
+            timeout=WEIGHT_SYNC_RPC_TIMEOUT_SECONDS,
         )
 
     async def update_weights_from_disk(
@@ -312,7 +317,7 @@ class SGLangApiClient:
             payload["load_format"] = load_format
         if weight_version is not None:
             payload["weight_version"] = weight_version
-        return await self._make_request("update_weights_from_disk", payload)
+        return await self._make_request("update_weights_from_disk", payload, timeout=WEIGHT_SYNC_RPC_TIMEOUT_SECONDS)
 
     async def init_weights_update_group(
         self, master_address, master_port, rank_offset, world_size, group_name, backend
@@ -370,12 +375,15 @@ class SGLangApiClient:
         response = await GeneralHttpClientProvider.client().post(
             f"{self.server_url}/pause_generation",
             json={"mode": mode},
+            timeout=WEIGHT_SYNC_RPC_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         return response
 
     async def continue_generation(self):
-        response = await GeneralHttpClientProvider.client().post(f"{self.server_url}/continue_generation", json={})
+        response = await GeneralHttpClientProvider.client().post(
+            f"{self.server_url}/continue_generation", json={}, timeout=WEIGHT_SYNC_RPC_TIMEOUT_SECONDS
+        )
         response.raise_for_status()
         return response
 
